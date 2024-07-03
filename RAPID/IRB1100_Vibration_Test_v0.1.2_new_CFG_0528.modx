@@ -1,0 +1,99 @@
+MODULE IRB1100_Vibration_Test
+    ! v0.1 IRB1100 Vibration Test
+    ! v0.1.1 Update Ax5 poses     
+	! v0.1.2 Move test pose to the back of the robot to support production test, short sensor cable
+    
+    CONST robtarget P_home:=[[75.44,-306.68,469.03],[5.12247E-05,0.106564,-0.994306,2.32927E-07],[-2,-1,-2,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+    CONST robtarget P_Load10:=[[-245.10,-372.91,169.88],[0.00190078,0.109755,-0.993957,0.000206133],[-2,-1,-2,0],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+    CONST robtarget P_Photo_safe:=[[-329.86,25.48,615.43],[0.0255635,-0.696458,0.020019,0.716863],[1,0,-1,1],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+    CONST robtarget P_Photo:=[[-597.20,34.03,594.97],[0.0179144,-0.709934,0.0171391,0.703831],[1,0,-1,1],[9E+09,9E+09,9E+09,9E+09,9E+09,9E+09]];
+    PERS tooldata tool1:=[TRUE,[[-75.069,-12.4496,46.5596],[1,0,0,0]],[0.974,[41,-3.9,39.7],[1,0,0,0],0.017,0.017,0.003]];
+	
+	
+    VAR speeddata V_10:=[20,20,0,0];
+    VAR speeddata V_low:=[100,100,0,0];
+    VAR speeddata V_High:=[500,500,0,0];
+    VAR speeddata V_zuzhuang:=[200,200,0,0];
+    VAR speeddata V_PZ:=[200,200,0,0];
+    VAR speeddata V:=[150,150,0,0];
+    
+    VAR num i;
+    VAR num option_index;
+    PERS num speed{3}:=[150,150,150]; 
+
+    PROC main()
+        WHILE True DO
+            TPErase;
+            TPWrite "**************************************";
+            TPWrite "*                                    *";
+            TPWrite "*       IRB1100 Vibration Test       *";
+            TPWrite "*                                    *";
+            TPWrite "**************************************";
+            WaitTIme 1;
+            TPReadFK option_index, "Select move type", "Go to sync pos", "Vibration Test", stEmpty, stEmpty, "EXIT";
+                IF option_index = 1 THEN
+					GotoSyncPos;
+				ELSEIF option_index = 5 THEN 
+					EXIT;
+				ELSEIF option_index = 2 THEN
+					VibrationTest;
+				ENDIF
+		ENDWHILE
+    ENDPROC
+
+    PROC VibrationTest()
+        
+		MoveJ P_Photo, V, fine, tool1;
+
+        TPWrite "Vibration Test Start!";
+        IF option_index=1 THEN
+        ELSEIF option_index=5 THEN
+            Return;
+        ENDIF
+	
+        TuneReset;
+        FOR i FROM 1 TO 1 DO
+            V.v_tcp:=speed{i};
+            V.v_ori:=speed{1};   
+            MoveJ P_Photo_safe, V, fine, tool1;
+            WaitTime 2;
+            MoveL P_Photo,V,fine,tool1;
+            WaitTime 2;       
+        ENDFOR
+        
+        TuneReset;
+        Tuneservo rob_1,2,50\type:=Tune_Kv;
+        Tuneservo rob_1,3,50\type:=Tune_KV;
+        FOR i FROM 1 TO 1 DO
+            V.v_tcp:=speed{i};
+            V.v_ori:=speed{1};   
+            MoveJ P_Photo_safe,V,fine,tool1;
+            WaitTime 2;
+            MoveL P_Photo,V,fine,tool1;
+            WaitTime 2;       
+        ENDFOR
+
+        TuneReset;
+        Tuneservo rob_1,2,20\type:=Tune_Kv;
+        Tuneservo rob_1,3,20\type:=Tune_KV;
+        Tuneservo rob_1,2,60\type:=Tune_Kp;
+        Tuneservo rob_1,3,60\type:=Tune_Kp;
+        FOR i FROM 1 TO 1 DO
+            V.v_tcp:=speed{i};
+            V.v_ori:=speed{1};   
+            MoveJ P_Photo_safe,V,fine,tool1;
+            WaitTime 2;
+            MoveL P_Photo,V,fine,tool1;
+            WaitTime 2;       
+        ENDFOR
+        
+        TPWrite "Vibration Test Finished";
+        WaitTime 2;
+    ENDPROC
+	
+    PROC GotoSyncPos()
+        TPWrite "Go Home!";
+		TuneReset;
+		MoveAbsJ [[0,0,0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]]\NoEOffs,v100,fine,tool1;
+	ENDPROC
+ENDMODULE
