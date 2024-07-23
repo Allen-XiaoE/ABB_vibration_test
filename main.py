@@ -1,9 +1,9 @@
-from PyQt5.QtWidgets import QApplication
-from ui import Vibration_Test_UI
+from ui import UI
 import sys
+from PyQt5.QtWidgets import QApplication
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app = QApplication(sys.argv)
-    myApp = Vibration_Test_UI()
-    myApp.show()
+    window = UI()
+    window.show()
     sys.exit(app.exec_())

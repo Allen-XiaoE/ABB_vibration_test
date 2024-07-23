@@ -1,8 +1,7 @@
-import os, sys
 import xsensdeviceapi as xda
-import time
 from threading import Lock
-
+from PyQt5.QtCore import QObject, pyqtSignal, pyqtSlot, QThread
+import os,time
 
 class XdaCallback(xda.XsCallback):
     def __init__(self):
@@ -18,6 +17,131 @@ class XdaCallback(xda.XsCallback):
         self.m_progress = current
         self.m_lock.release()
 
+class Receiver(QThread):
+    update_status = pyqtSignal(str)
+    start_controller = pyqtSignal()
+    parser = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self,series='IRB1100-00001'):
+        super(Receiver,self).__init__()
+        self.cycle = True
+        self.series = series
+
+    def run(self):
+
+        self.control = xda.XsControl_construct()
+        self.mtPort = xda.XsPortInfo()
+        try:
+            portInfoArray = xda.XsScanner_scanPorts()
+
+            for i in range(portInfoArray.size()):
+                if (
+                    portInfoArray[i].deviceId().isMti()
+                    or portInfoArray[i].deviceId().isMtig()
+                ):
+                    self.mtPort = portInfoArray[i]
+                    break        
+            while self.mtPort.empty():
+                self.error.emit("没有发现sensor,请检查连接!")
+                while self.cycle:
+                    self.msleep(100)
+                self.reset_cycle()
+                portInfoArray = xda.XsScanner_scanPorts()
+
+                for i in range(portInfoArray.size()):
+                    if (
+                        portInfoArray[i].deviceId().isMti()
+                        or portInfoArray[i].deviceId().isMtig()
+                    ):
+                        self.mtPort = portInfoArray[i]
+                        break
+            did = self.mtPort.deviceId()
+            if not self.control.openPort(self.mtPort.portName(), self.mtPort.baudrate()):
+                raise RuntimeError("Could not open port. Aborting.")
+            self.device = self.control.device(did)
+            if self.device == 0:
+                raise RuntimeError('Cannot create device! Aborting.')
+            self.callback = XdaCallback()
+            self.device.addCallbackHandler(self.callback)
+            if not self.device.gotoConfig():
+                raise RuntimeError(
+                    "Could not put device into configuration mode. Aborting."
+                )
+
+            configArray = xda.XsOutputConfigurationArray()
+            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_PacketCounter, 0))
+            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_SampleTimeFine, 0))
+            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Acceleration, 400))
+            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_FreeAcceleration, 400))
+            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_MagneticField, 400))
+            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Quaternion, 400))
+
+
+            if not self.device.setOutputConfiguration(configArray):
+                raise RuntimeError("Could not configure the device. Aborting.")
+            
+            self.update_status.emit("Sensor热机中,该过程需要1分钟时间!")
+            self.sleep(60)
+
+            logFileName = os.path.join("DATA", self.series + ".mtb")
+            if self.device.createLogFile(logFileName) != xda.XRV_OK:
+                raise RuntimeError("Failed to create a log file. Aborting.")
+
+            if not self.device.gotoMeasurement():
+                raise RuntimeError("Could not put device into measurement mode. Aborting.")
+            self.update_status.emit("创建数据记录文件: %s.mtb" % self.series)
+
+            if not self.device.startRecording():
+                raise RuntimeError("Failed to start recording. Aborting.")
+            else:
+                self.update_status.emit('开始数据记录!')
+            self.start_controller.emit()
+
+            while self.cycle:
+                self.msleep(100)
+            self.reset_cycle()
+
+            if not self.device.closeLogFile():
+                raise RuntimeError("Failed to close log file. Aborting.")
+            else:
+                self.update_status.emit('记录完成!')
+            # print("Removing callback handler...")
+            self.device.removeCallbackHandler(self.callback)
+
+            # print("Closing port...")
+            self.control.closePort(self.mtPort.portName())
+
+            # print("Closing XsControl object...")
+            self.control.close()
+
+        except RuntimeError as error:
+            self.update_status.emit(repr(error))
+
+        except Exception as e:
+            self.update_status.emit("An unknown fatal error has occured. Aborting.")
+            self.update_status.emit(repr(e))
+
+        else:
+            self.update_status.emit("Sensor成功退出")
+        
+        self.parser.emit()
+
+    def reset_cycle(self):
+        self.cycle =True
+    
+    @pyqtSlot()
+    def stop_cycle(self):
+        self.cycle = False
+    
+    def stop_sensor(self):
+        self.device.removeCallbackHandler(self.callback)
+
+        # print("Closing port...")
+        self.control.closePort(self.mtPort.portName())
+
+        # print("Closing XsControl object...")
+        self.control.close()
 
 def parser(filename):
     print("Creating XsControl object...")
@@ -103,136 +227,5 @@ def parser(filename):
         print(error)
     except:
         print("An unknown fatal error has occured. Aborting.")
-    else:
-        print("Successful exit.")
-
-
-def receiver(fname, pill2kill):
-    print("Creating XsControl object...")
-    control = xda.XsControl_construct()
-    assert control != 0
-
-    xdaVersion = xda.XsVersion()
-    xda.xdaVersion(xdaVersion)
-    print("Using XDA version %s" % xdaVersion.toXsString())
-
-    try:
-        print("Scanning for devices...")
-        portInfoArray = xda.XsScanner_scanPorts()
-
-        # Find an MTi device
-        mtPort = xda.XsPortInfo()
-        for i in range(portInfoArray.size()):
-            if (
-                portInfoArray[i].deviceId().isMti()
-                or portInfoArray[i].deviceId().isMtig()
-            ):
-                mtPort = portInfoArray[i]
-                break
-
-        if mtPort.empty():
-            raise RuntimeError("No MTi device found. Aborting.")
-
-        did = mtPort.deviceId()
-        print("Found a device with:")
-        print(" Device ID: %s" % did.toXsString())
-        print(" Port name: %s" % mtPort.portName())
-
-        print("Opening port...")
-        if not control.openPort(mtPort.portName(), mtPort.baudrate()):
-            raise RuntimeError("Could not open port. Aborting.")
-
-        # Get the device object
-        device = control.device(did)
-        assert device != 0
-
-        print(
-            "Device: %s, with ID: %s opened."
-            % (device.productCode(), device.deviceId().toXsString())
-        )
-
-        # Create and attach callback handler to device
-        callback = XdaCallback()
-        device.addCallbackHandler(callback)
-
-        # Put the device into configuration mode before configuring the device
-        print("Putting device into configuration mode...")
-        if not device.gotoConfig():
-            raise RuntimeError(
-                "Could not put device into configuration mode. Aborting."
-            )
-
-        print("Configuring the device...")
-        configArray = xda.XsOutputConfigurationArray()
-        configArray.push_back(xda.XsOutputConfiguration(xda.XDI_PacketCounter, 0))
-        configArray.push_back(xda.XsOutputConfiguration(xda.XDI_SampleTimeFine, 0))
-
-        if device.deviceId().isImu():
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Acceleration, 400))
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_RateOfTurn, 400))
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_MagneticField, 400))
-        elif device.deviceId().isVru() or device.deviceId().isAhrs():
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Acceleration, 400))
-            configArray.push_back(
-                xda.XsOutputConfiguration(xda.XDI_FreeAcceleration, 400)
-            )
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_MagneticField, 400))
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Quaternion, 400))
-        elif device.deviceId().isGnss():
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Quaternion, 400))
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_LatLon, 400))
-            configArray.push_back(
-                xda.XsOutputConfiguration(xda.XDI_AltitudeEllipsoid, 400)
-            )
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_VelocityXYZ, 400))
-        else:
-            raise RuntimeError("Unknown device while configuring. Aborting.")
-
-        if not device.setOutputConfiguration(configArray):
-            raise RuntimeError("Could not configure the device. Aborting.")
-
-        print("Creating a log file...")
-        logFileName = os.path.join("DATA", fname + ".mtb")
-        if device.createLogFile(logFileName) != xda.XRV_OK:
-            raise RuntimeError("Failed to create a log file. Aborting.")
-        else:
-            print("Created a log file: %s" % fname)
-
-        print("Putting device into measurement mode...")
-        if not device.gotoMeasurement():
-            raise RuntimeError("Could not put device into measurement mode. Aborting.")
-
-        print("Starting recording...")
-        if not device.startRecording():
-            raise RuntimeError("Failed to start recording. Aborting.")
-
-        print("Main loop. Recording data for 10 seconds.")
-
-        while pill2kill.empty():
-            time.sleep(0.1)
-
-        print("\nStopping recording...")
-        if not device.stopRecording():
-            raise RuntimeError("Failed to stop recording. Aborting.")
-
-        print("Closing log file...")
-        if not device.closeLogFile():
-            raise RuntimeError("Failed to close log file. Aborting.")
-
-        print("Removing callback handler...")
-        device.removeCallbackHandler(callback)
-
-        print("Closing port...")
-        control.closePort(mtPort.portName())
-
-        print("Closing XsControl object...")
-        control.close()
-
-    except RuntimeError as error:
-        print(error)
-        sys.exit(1)
-    except:
-        print("An unknown fatal error has occured. Aborting.")
-        sys.exit(1)
     else:
         print("Successful exit.")

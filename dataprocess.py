@@ -12,11 +12,13 @@ def initt():
     cut_length = config.get('settings','cut_length')
     freq = config.get('settings','freq')
     spec = config.get('settings','spec')
+    url = config.get('settings','url')
     return{
         'path':path,
         'cut_window':int(cut_length),
         'freq':int(freq),
-        'spec':float(spec)
+        'spec':float(spec),
+        'url':url
     }
 
 # 1.读取txt
@@ -47,3 +49,7 @@ def calculation(fname):
         else:
             PASS_OR_NOT.append(1)
     return PASS_OR_NOT
+
+if __name__ == '__main__':
+    or_not = calculation('1100-502179')
+    print(or_not)
