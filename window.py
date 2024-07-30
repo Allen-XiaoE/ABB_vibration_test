@@ -189,7 +189,7 @@ class Ui_MainWindow(object):
         self.get_serial_number_button.setText(
             _translate("MainWindow", "Get Serial NO.")
         )
-        self.status_text.setText(_translate("MainWindow", "Status Window"))
+        self.status_text.setText(_translate("MainWindow", ""))
         self.viration_test_button.setText(_translate("MainWindow", "Vibration Test"))
         self.stop_button.setText(_translate("MainWindow", "Stop"))
         self.gotosyncpose_button.setText(_translate("MainWindow", "GotoSyncPos"))

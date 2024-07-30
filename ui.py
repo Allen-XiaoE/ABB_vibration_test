@@ -1,31 +1,119 @@
-import sys, time,os
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox
 from window import Ui_MainWindow
-from mti import parser, receiver, XdaCallback
-import xsensdeviceapi as xda
-from rws import RWS
-from queue import Queue
-from dataprocess import calculation
+from rws import RWS, Vibration, GohomeThread,GovibrationposThread
+from mti import Receiver, parser
+from dataprocess import calculation,initt
+import sys,os
+from openpyxl import load_workbook
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox
 
 
-class Vibration_Test_UI(QMainWindow, Ui_MainWindow):
+class UI(QMainWindow, Ui_MainWindow):
+
     def __init__(self):
-        super(Vibration_Test_UI, self).__init__()
+        params = initt()
+        self.path = params['path']
+        # self.validFormat = '<font color="green" size="12">{}</font>'
+        super(UI, self).__init__()
         self.setupUi(self)
-        self.rws = RWS()
-        self.q = Queue()
-        self.viration_test_button.clicked.connect(self.run)
+        self.rws = RWS(url=params['url'])
+        self.viration_test_button.clicked.connect(self.START)
         self.get_serial_number_button.clicked.connect(self.get_serial)
         self.stop_button.clicked.connect(self.stop)
         self.gotosyncpose_button.clicked.connect(self.gohome)
         self.motor_on_button.clicked.connect(self.motor_on)
 
-    def update_status(self, text):
-        self.status_text.append(text)
+    def run(self):
+        self.vibration = Vibration(self.rws)
+        self.vibration.update_status.connect(self.update_status)
+        self.vibration.stop_record.connect(self.mti_receive.stop_cycle)
+        self.vibration.error.connect(self.get_controller_error)
+        self.vibration.start()
+
+    def run_sensor(self):
+        # if self.validateInput():
+        #     return
+        # self.clear_status()
+        # self.go_vibration_pos()
+
+        self.mti_receive = Receiver(series=self.serial_number.text(),path=self.path)
+        self.mti_receive.update_status.connect(self.update_status)
+        self.mti_receive.start_controller.connect(self.run)
+        self.mti_receive.error.connect(self.get_sensor_error)
+        self.mti_receive.parser.connect(self.run_parser_and_dataprocess)
+        self.mti_receive.start()
+
+    def START(self):
+        if self.validateInput():
+            return
+        self.clear_status()
+        self.govibrationpos = GovibrationposThread(self.rws)
+        self.govibrationpos.update_status.connect(self.update_status)
+        self.govibrationpos.error.connect(self.go_vibration_pose_rapid)
+        self.govibrationpos.start_record.connect(self.run_sensor)
+        self.govibrationpos.start()
+
+    def run_parser_and_dataprocess(self):
+        try:
+            self.update_status('开始解析数据')
+            parser(filename=self.serial_number.text(),path=self.path)
+            self.update_status('数据解析完成')
+            self.update_status('开始结果分析')
+            pass_or_not = calculation(self.serial_number.text(),self.path)#'1100-502179'
+            self.update_status('结果分析完成')
+            print(pass_or_not)
+            # self.update_status(str(pass_or_not))
+            pass_or_not.insert(0,self.serial_number.text())
+            self.write_data(pass_or_not)
+            print('PASS')
+            self.run_complete()
+        except Exception as e:
+            self.update_status('运行是发生错误,如下：')
+            self.update_status(repr(e))
+    
+    def run_complete(self):
+        self.status_text.append('Vibration测试结束！')
+
+    def update_status(self, message):
+        self.status_text.append(message)
+
+    def get_controller_error(self, value):
+        choice = QMessageBox.warning(
+            self, "警告", value, QMessageBox.Yes | QMessageBox.No
+        )
+        if choice == QMessageBox.Yes:
+            self.vibration.stop_cycle()
+        else:
+            self.vibration.exit()
+
+    def get_sensor_error(self, value):
+        choice = QMessageBox.warning(
+            self, "警告", value, QMessageBox.Yes | QMessageBox.No
+        )
+        if choice == QMessageBox.Yes:
+            self.mti_receive.stop_cycle()
+        else:
+            self.mti_receive.exit()
+    
+    def go_home_rapid(self, value):
+        choice = QMessageBox.warning(
+            self, "警告", value, QMessageBox.Yes | QMessageBox.No
+        )
+        if choice == QMessageBox.Yes:
+            self.gohome_run.stop_cycle()
+        else:
+            self.gohome_run.exit()
+    
+    def go_vibration_pose_rapid(self, value):
+        choice = QMessageBox.warning(
+            self, "警告", value, QMessageBox.Yes | QMessageBox.No
+        )
+        if choice == QMessageBox.Yes:
+            self.govibrationpos.stop_cycle()
+        else:
+            self.govibrationpos.exit()
 
     def clear_status(self):
-        self.status_text.clear()
+        self.status_text.setText('')
 
     def get_serial(self):
         if self.rws.baseurl == "https://192.168.125.1":
@@ -35,8 +123,10 @@ class Vibration_Test_UI(QMainWindow, Ui_MainWindow):
         self.serial_number.setText(serial)
 
     def gohome(self):
-        self.gohome_run = GohomeThread(self.rws, self.q)
+        self.clear_status()
+        self.gohome_run = GohomeThread(self.rws)
         self.gohome_run.update_status.connect(self.update_status)
+        self.gohome_run.error.connect(self.go_home_rapid)
         self.gohome_run.start()
 
     def motor_on(self):
@@ -45,257 +135,72 @@ class Vibration_Test_UI(QMainWindow, Ui_MainWindow):
 
     def stop(self):
         self.rws.stopexcuseRapid()
-        self.update_status("Stop rapid!")
+        # self.update_status("Stop rapid!")
+        if hasattr(self,'mti_receive'):
+            self.mti_receive.quit()
+        if hasattr(self,'vibration'):
+            self.vibration.quit()
+        self.update_status('程序停止了！')
+
+    def validateInput(self):
+        # 获取输入框的文本内容
+        text = self.serial_number.text()
+        if text == "":
+            QMessageBox.warning(self, "Warning", "机器人序列号不能为空")
+            return True
+        self.series = text
+        return False
     
-    def cal(self,series):
-        self.update_status('开始数据解析')
-        parser(series)
-        self.update_status('数据解析完成')
-        value = calculation(series)
-        self.update_status(f'Result:{value}')
+    def judge(self, values):
+        i = 1
+        tune_dic = {"Kv_2": 0, "Kv_3": 0, "Kp_2": 0, "Kp_3": 0}
 
-    def run(self):
-        self.clear_status()
-        serial = self.serial_number.text()
+        if values[1] == 1 or values[2] == 1:
+            i += 1
+        if values[3] == 1 or values[4] == 1:
+            i += 1
+        if values[5] == 1 or values[6] == 1:
+            i += 1
 
-        self.receives = Recive_Data(serial=serial,q=self.q)
-        self.receives.update_status.connect(self.update_status)
-        self.receives.cal.connect(self.cal)
-        self.receives.start()
-        # self.q.put('startRecording')
-
-
-        self.work = WorkerThread(self.rws, serial, self.q)
-        self.work.update_status.connect(self.update_status)
-        self.work.start()
-
-
-class WorkerThread(QThread):
-
-    update_status = pyqtSignal(str)
-
-    def __init__(self, rws: RWS, serial: str, q: Queue):
-        super().__init__()
-        self.rws = rws
-        self.serial = serial
-        self.queue = q
-
-    def run(self):
-
-        while self.queue.empty():
-            time.sleep(5)
-        
-        if self.queue.get() != 'start':
-            self.update_status.emit('程序停止')
-            return
-        
-        while self.rws.connect_verification() != "OK":
-            self.update_status.emit("请检查控制柜连接！")
-
-        self.update_status.emit(f"Serial No.: {self.serial}")
-
-        while self.rws.GETopmode() != "AUTO":
-            self.update_status.emit("请将Auto！")
-
-        self.update_status.emit("电机上电")
-
-        if self.rws.motor("motoron") != "OK":
-            self.update_status.emit(
-                "电机上电失败,检查控制柜连接状态以及控制柜模式是否为自动！"
-            )
-
-        _con = open(r"RAPID\IRB1100_Vibration_Test_v0.1.2_new_CFG_0528.modx", "r")
-        content = _con.read()
-        if self.rws.uploadfile("temp/vibration.modx", content=content) != "OK":
-            self.update_status.emit("上传失败")
-
-        if self.rws.loadmodule("temp/vibration.modx") != "OK":
-            self.update_status.emit("载入失败")
-
-        if self.rws.pptoRoutine("VibrationTest", "IRB1100_Vibration_Test") != "OK":
-            self.update_status.emit("PP失败")
-        if self.rws.excuseRapid() != "OK":
-            self.update_status.emit("rapid执行失败")
-
-        while self.rws.GETrapidstatus() != "stopped":
-            self.update_status.emit("程序VibrationTest运行中...")
-            time.sleep(5)
-
-        if self.rws.unloadmodule("IRB1100_Vibration_Test") != "OK":
-            self.update_status.emit("unload失败")
-
-        if self.rws.deletefile("temp/vibration.modx") != "OK":
-            self.update_status.emit("删除失败")
-        self.queue.put("complete")
-
-        self.update_status.emit("完成！")
-
-
-class GohomeThread(QThread):
-    update_status = pyqtSignal(str)
-
-    def __init__(self, rws):
-        super().__init__()
-        self.rws = rws
-
-    def run(self):
-        while self.rws.connect_verification() != "OK":
-            self.update_status.emit("请检查控制柜连接！")
-
-        while self.rws.GETopmode() != "AUTO":
-            self.update_status.emit("请将Auto！")
-
-        self.update_status.emit("电机上电")
-
-        if self.rws.motor("motoron") != "OK":
-            self.update_status.emit(
-                "电机上电失败,检查控制柜连接状态以及控制柜模式是否为自动！"
-            )
-        self.rws = RWS()
-
-        _con = open(r"RAPID\IRB1100_Vibration_Test_v0.1.2_new_CFG_0528.modx", "r")
-        content = _con.read()
-        if self.rws.uploadfile("temp/vibration.modx", content=content) != "OK":
-            self.update_status.emit("上传失败")
-
-        if self.rws.loadmodule("temp/vibration.modx") != "OK":
-            self.update_status.emit("载入失败")
-
-        if self.rws.pptoRoutine("GotoSyncPos", "IRB1100_Vibration_Test") != "OK":
-            self.update_status.emit("PP失败")
-
-        if self.rws.excuseRapid() != "OK":
-            self.update_status.emit("rapid执行失败")
-
-        while self.rws.GETrapidstatus() != "stopped":
-            self.update_status.emit("程序GotoSyncPos运行中...")
-            time.sleep(5)
-
-        if self.rws.unloadmodule("IRB1100_Vibration_Test") != "OK":
-            self.update_status.emit("unload失败")
-
-        if self.rws.deletefile("temp/vibration.modx") != "OK":
-            self.update_status.emit("删除失败")
-
-        self.update_status.emit("完成！")
-
-
-class Recive_Data(QThread):
-    update_status = pyqtSignal(str)
-    cal = pyqtSignal(str)
-
-    def __init__(self, q: Queue, serial: str) -> None:
-        super().__init__()
-        self.q = q
-        self.series = serial
-
-    def run(self):
-        control = xda.XsControl_construct()
-        mtPort = xda.XsPortInfo()
-        try:
-            portInfoArray = xda.XsScanner_scanPorts()
-
-            for i in range(portInfoArray.size()):
-                if (
-                    portInfoArray[i].deviceId().isMti()
-                    or portInfoArray[i].deviceId().isMtig()
-                ):
-                    mtPort = portInfoArray[i]
-                    break
-            while mtPort.empty():
-                self.update_status.emit("没有发现sensor,请检查连接!")
-                time.sleep(5)
-            did = mtPort.deviceId()
-            if not control.openPort(mtPort.portName(), mtPort.baudrate()):
-                raise RuntimeError("Could not open port. Aborting.")
-            device = control.device(did)
-            if device == 0:
-                raise RuntimeError('Cannot create device! Aborting.')
-            callback = XdaCallback()
-            device.addCallbackHandler(callback)
-            if not device.gotoConfig():
-                raise RuntimeError(
-                    "Could not put device into configuration mode. Aborting."
-                )
-
-            configArray = xda.XsOutputConfigurationArray()
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_PacketCounter, 0))
-            configArray.push_back(xda.XsOutputConfiguration(xda.XDI_SampleTimeFine, 0))
-
-            if device.deviceId().isImu():
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Acceleration, 400))
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_RateOfTurn, 400))
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_MagneticField, 400))
-            elif device.deviceId().isVru() or device.deviceId().isAhrs():
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Acceleration, 400))
-                configArray.push_back(
-                    xda.XsOutputConfiguration(xda.XDI_FreeAcceleration, 400)
-                )
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_MagneticField, 400))
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Quaternion, 400))
-            elif device.deviceId().isGnss():
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_Quaternion, 400))
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_LatLon, 400))
-                configArray.push_back(
-                    xda.XsOutputConfiguration(xda.XDI_AltitudeEllipsoid, 400)
-                )
-                configArray.push_back(xda.XsOutputConfiguration(xda.XDI_VelocityXYZ, 400))
-            else:
-                raise RuntimeError("Unknown device while configuring. Aborting.")
-
-            if not device.setOutputConfiguration(configArray):
-                raise RuntimeError("Could not configure the device. Aborting.")
-            
-            logFileName = os.path.join("DATA", self.series + ".mtb")
-            if device.createLogFile(logFileName) != xda.XRV_OK:
-                raise RuntimeError("Failed to create a log file. Aborting.")
-            else:
-                self.update_status.emit("Created a log file: %s.mtb" % self.series)
-
-            if not device.gotoMeasurement():
-                raise RuntimeError("Could not put device into measurement mode. Aborting.")
-
-            self.update_status.emit("Sensor需要进行热机中,大概需要2分钟!")
-            time.sleep(120)
-            self.q.put('Start')
-            if self.q.get() == 'Start':
-                if not device.startRecording():
-                    raise RuntimeError("Failed to start recording. Aborting.")
-                self.update_status.emit('开始数据记录!')
-            else:
-                if not device.closeLogFile():
-                    raise RuntimeError("Failed to close log file. Aborting.")
-                device.removeCallbackHandler(callback)
-                control.closePort(mtPort.portName())
-                control.close()
-                return
-            
-            while self.q.empty():
-                time.sleep(1)
-            self.update_status.emit('记录完成!')
-            if not device.closeLogFile():
-                raise RuntimeError("Failed to close log file. Aborting.")
-
-            print("Removing callback handler...")
-            device.removeCallbackHandler(callback)
-
-            print("Closing port...")
-            control.closePort(mtPort.portName())
-
-            print("Closing XsControl object...")
-            control.close()
-
-        except RuntimeError as error:
-            self.update_status.emit(repr(error))
-
-        except:
-            self.update_status.emit("An unknown fatal error has occured. Aborting.")
+        if i == 1:
+            pass
+        elif i == 2:
+            tune_dic["Kv_2"] = 50
+            tune_dic["Kv_3"] = 50
+        elif i == 3:
+            tune_dic["Kp_2"] = 60
+            tune_dic["Kp_3"] = 60
+            tune_dic["Kv_2"] = 20
+            tune_dic["Kv_3"] = 20
         else:
-            self.update_status.emit("Successful exit.")
-        self.cal.emit(self.series)
+            return False
         
+        if tune_dic:
+                if tune_dic['Kv_2'] == 0:
+                    self.statusWindow.append(self.validFormat.format(f"所有过程均不振动,无需调整参数！"))
+                elif tune_dic['Kv_2'] != 0 and tune_dic['Kp_2'] == 0:
+                    self.statusWindow.append(self.validFormat.format(f"第一段振动，第二段不振动！需要调整参数如下:"))
+                    self.statusWindow.append(self.validFormat.format(f"二轴Kv为{tune_dic['Kv_2']}, 三轴Kv为{tune_dic['Kv_3']}"))
+                elif tune_dic['Kv_2'] != 0 and tune_dic['Kp_2'] != 0:
+                    self.statusWindow.append(self.validFormat.format(f"第一、二段振动，第三段不振动！需要调整参数如下:"))
+                    self.statusWindow.append(self.validFormat.format(f"二轴Kv为{tune_dic['Kv_2']}, 三轴Kv为{tune_dic['Kv_3']}, 二轴Kp为{tune_dic['Kp_2']}, 三轴Kp为{tune_dic['Kp_3']}"))
+        else:
+            self.statusWindow.append(self.validFormat.format(f"所有阶段都振动，请检查设备！"))
+
+    def write_data(self, values):
+        # values.insert(0, self.series)
+        result_path = os.path.join(self.path,"RESULT", "RESULT.xlsx")
+        wb = load_workbook(result_path)
+        sheet = wb.active
+        last_row = sheet.max_row
+        for index, cell in enumerate(values):
+            sheet.cell(row=last_row + 1, column=index + 1).value = cell
+        wb.save(result_path)
+    
+    
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = Vibration_Test_UI()
+    window = UI()
     window.show()
     sys.exit(app.exec_())

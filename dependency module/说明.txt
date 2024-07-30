@@ -1,0 +1,1 @@
+当用pyinstaller打包的时候，会出现xsense模块找不到的情况。需要在打包的dist中的internal文件夹中把xsensdeviceapi文件夹放入，方可打开这个文件。
