@@ -1,6 +1,6 @@
 from requests import Session
 from requests.auth import HTTPBasicAuth
-import json
+import json,os
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QThread
 import warnings
 
@@ -297,7 +297,7 @@ class Vibration(QThread):
         if self.rws.pptoRoutine("VibrationTest", "IRB1100_Vibration_Test") != "OK":
             self.update_status.emit("PP失败")
         if self.rws.excuseRapid() != "OK":
-            self.update_status.emit("rapid执行失败")
+            self.update_status.emit("请在TPU上开始程序")
         while self.rws.GETrapidstatus() == "stopped":
             self.error.emit("请在TPU上开始程序")
             while self.cycle:
@@ -366,7 +366,7 @@ class GohomeThread(QThread):
             self.update_status.emit("PP失败")
 
         if self.rws.excuseRapid() != "OK":
-            self.update_status.emit("rapid执行失败")
+            self.update_status.emit("请在TPU上开始程序")
         while self.rws.GETrapidstatus() == "stopped":
             self.error.emit("请在TPU上开始程序")
             while self.cycle:
@@ -393,7 +393,79 @@ class GohomeThread(QThread):
     def reset_cycle(self):
         self.cycle = True
 
+class GovibrationposThread(QThread):
+    update_status = pyqtSignal(str)
+    error = pyqtSignal(str)
+    start_record = pyqtSignal()
+    
+    def __init__(self, rws):
+        super().__init__()
+        self.rws = rws
+        self.cycle = True
+
+    def run(self):
+        
+        while self.rws.connect_verification() != "OK":
+            self.error.emit("请检查控制柜连接！")
+            while self.cycle:
+                self.msleep(100)
+            self.reset_cycle()
+
+        while self.rws.GETopmode() != "AUTO":
+            self.error.emit("请设置模式为Auto！")
+            while self.cycle:
+                self.msleep(100)
+            self.reset_cycle()
+
+        if self.rws.motor("motoron") != "OK":
+            self.update_status.emit(
+                "电机上电失败,检查控制柜连接状态以及控制柜模式是否为自动！"
+            )
+        else:
+            self.update_status.emit("电机上电")
+
+        _con = open(r"RAPID\IRB1100_Vibration_Test_v0.1.2_new_CFG_0528.modx", "r")
+        content = _con.read()
+        if self.rws.uploadfile("temp/vibration.modx", content=content) != "OK":
+            self.update_status.emit("上传失败")
+
+        if self.rws.loadmodule("temp/vibration.modx") != "OK":
+            self.update_status.emit("载入失败")
+
+        if self.rws.pptoRoutine("GoVibPos", "IRB1100_Vibration_Test") != "OK":
+            self.update_status.emit("PP失败")
+
+        if self.rws.excuseRapid() != "OK":
+            self.update_status.emit("请在TPU上开始程序")
+        # self.error.emit("请在TPU上开始程序")
+        while self.rws.GETrapidstatus() == "stopped":
+            self.error.emit("请在TPU上开始程序")
+            while self.cycle:
+                self.msleep(100)
+            self.reset_cycle()
+
+        self.update_status.emit("程序Go to Vibration Pose运行中...")
+        while self.rws.GETrapidstatus() != "stopped":
+            self.sleep(2)
+        self.update_status.emit("程序Go to Vibration Pose运行结束")
+
+        if self.rws.unloadmodule("IRB1100_Vibration_Test") != "OK":
+            self.update_status.emit("unload失败")
+
+        if self.rws.deletefile("temp/vibration.modx") != "OK":
+            self.update_status.emit("删除失败")
+
+        self.update_status.emit("完成！")
+        self.start_record.emit()
+    
+    @pyqtSlot()
+    def stop_cycle(self):
+        self.cycle = False
+    
+    def reset_cycle(self):
+        self.cycle = True
+
 if __name__ == "__main__":
-    rws = RWS()#url="192.168.125.1"
+    rws = RWS(url="192.168.125.1")#
     print(rws.local_register())
     # print(rws.excuseRapid())

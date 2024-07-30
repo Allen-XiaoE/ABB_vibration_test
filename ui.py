@@ -1,5 +1,5 @@
 from window import Ui_MainWindow
-from rws import RWS, Vibration, GohomeThread
+from rws import RWS, Vibration, GohomeThread,GovibrationposThread
 from mti import Receiver, parser
 from dataprocess import calculation,initt
 import sys,os
@@ -11,11 +11,12 @@ class UI(QMainWindow, Ui_MainWindow):
 
     def __init__(self):
         params = initt()
-        self.validFormat = '<font color="green" size="12">{}</font>'
+        self.path = params['path']
+        # self.validFormat = '<font color="green" size="12">{}</font>'
         super(UI, self).__init__()
         self.setupUi(self)
         self.rws = RWS(url=params['url'])
-        self.viration_test_button.clicked.connect(self.run_sensor)
+        self.viration_test_button.clicked.connect(self.START)
         self.get_serial_number_button.clicked.connect(self.get_serial)
         self.stop_button.clicked.connect(self.stop)
         self.gotosyncpose_button.clicked.connect(self.gohome)
@@ -29,23 +30,35 @@ class UI(QMainWindow, Ui_MainWindow):
         self.vibration.start()
 
     def run_sensor(self):
-        if self.validateInput():
-            return
-        self.clear_status()
-        self.mti_receive = Receiver(series=self.serial_number.text())
+        # if self.validateInput():
+        #     return
+        # self.clear_status()
+        # self.go_vibration_pos()
+
+        self.mti_receive = Receiver(series=self.serial_number.text(),path=self.path)
         self.mti_receive.update_status.connect(self.update_status)
         self.mti_receive.start_controller.connect(self.run)
         self.mti_receive.error.connect(self.get_sensor_error)
         self.mti_receive.parser.connect(self.run_parser_and_dataprocess)
         self.mti_receive.start()
 
+    def START(self):
+        if self.validateInput():
+            return
+        self.clear_status()
+        self.govibrationpos = GovibrationposThread(self.rws)
+        self.govibrationpos.update_status.connect(self.update_status)
+        self.govibrationpos.error.connect(self.go_vibration_pose_rapid)
+        self.govibrationpos.start_record.connect(self.run_sensor)
+        self.govibrationpos.start()
+
     def run_parser_and_dataprocess(self):
         try:
             self.update_status('开始解析数据')
-            parser(filename=self.serial_number.text())
+            parser(filename=self.serial_number.text(),path=self.path)
             self.update_status('数据解析完成')
             self.update_status('开始结果分析')
-            pass_or_not = calculation(self.serial_number.text())#'1100-502179'
+            pass_or_not = calculation(self.serial_number.text(),self.path)#'1100-502179'
             self.update_status('结果分析完成')
             print(pass_or_not)
             # self.update_status(str(pass_or_not))
@@ -89,6 +102,15 @@ class UI(QMainWindow, Ui_MainWindow):
             self.gohome_run.stop_cycle()
         else:
             self.gohome_run.exit()
+    
+    def go_vibration_pose_rapid(self, value):
+        choice = QMessageBox.warning(
+            self, "警告", value, QMessageBox.Yes | QMessageBox.No
+        )
+        if choice == QMessageBox.Yes:
+            self.govibrationpos.stop_cycle()
+        else:
+            self.govibrationpos.exit()
 
     def clear_status(self):
         self.status_text.setText('')
@@ -167,13 +189,14 @@ class UI(QMainWindow, Ui_MainWindow):
 
     def write_data(self, values):
         # values.insert(0, self.series)
-        result_path = os.path.join("RESULT", "RESULT.xlsx")
+        result_path = os.path.join(self.path,"RESULT", "RESULT.xlsx")
         wb = load_workbook(result_path)
         sheet = wb.active
         last_row = sheet.max_row
         for index, cell in enumerate(values):
             sheet.cell(row=last_row + 1, column=index + 1).value = cell
         wb.save(result_path)
+    
     
 
 if __name__ == "__main__":

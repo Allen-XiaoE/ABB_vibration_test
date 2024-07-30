@@ -23,10 +23,11 @@ class Receiver(QThread):
     parser = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self,series='IRB1100-00001'):
+    def __init__(self,series='IRB1100-00001',path=''):
         super(Receiver,self).__init__()
         self.cycle = True
         self.series = series
+        self.path = path
 
     def run(self):
 
@@ -84,7 +85,7 @@ class Receiver(QThread):
             self.update_status.emit("Sensor热机中,该过程需要1分钟时间!")
             self.sleep(60)
 
-            logFileName = os.path.join("DATA", self.series + ".mtb")
+            logFileName = os.path.join(self.path,"DATA", self.series + ".mtb")
             if self.device.createLogFile(logFileName) != xda.XRV_OK:
                 raise RuntimeError("Failed to create a log file. Aborting.")
 
@@ -143,7 +144,7 @@ class Receiver(QThread):
         # print("Closing XsControl object...")
         self.control.close()
 
-def parser(filename):
+def parser(filename,path):
     print("Creating XsControl object...")
     control = xda.XsControl_construct()
     assert control != 0
@@ -154,7 +155,7 @@ def parser(filename):
 
     try:
         print("Opening log file...")
-        logfileName = os.path.join("DATA", f"{filename}.mtb")
+        logfileName = os.path.join(path,"DATA", f"{filename}.mtb")
         if not control.openLogFile(logfileName):
             raise RuntimeError("Failed to open log file. Aborting.")
         print("Opened log file: %s" % logfileName)
@@ -212,7 +213,7 @@ def parser(filename):
                 s += "\n"
             index += 1
 
-        exportFileName = f"DATA//{filename}.txt"
+        exportFileName = os.path.join(path,"DATA", f"{filename}.txt")
         with open(exportFileName, "w") as outfile:
             outfile.write(s)
         print("File is exported to: %s" % exportFileName)

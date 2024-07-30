@@ -22,10 +22,10 @@ def initt():
     }
 
 # 1.读取txt
-def calculation(fname):
+def calculation(fname,path):
     params = initt()
     fs = 400
-    path = os.path.join('DATA',f'{fname}.txt')
+    path = os.path.join(path,'DATA',f'{fname}.txt')
     df = pd.read_csv(path, sep=",")
     df["Total"] = np.sqrt(
         df["FreeAcc_E"] ** 2 + df["FreeAcc_N"] ** 2 + df["FreeAcc_U"] ** 2

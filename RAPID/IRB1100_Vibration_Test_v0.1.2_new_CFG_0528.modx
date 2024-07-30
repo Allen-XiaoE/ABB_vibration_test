@@ -30,13 +30,15 @@ MODULE IRB1100_Vibration_Test
             TPWrite "*                                    *";
             TPWrite "**************************************";
             WaitTIme 1;
-            TPReadFK option_index, "Select move type", "Go to sync pos", "Vibration Test", stEmpty, stEmpty, "EXIT";
+            TPReadFK option_index, "Select move type", "Go to sync pos", "Vibration Test","Go to vibration pos", stEmpty, "EXIT";
                 IF option_index = 1 THEN
 					GotoSyncPos;
 				ELSEIF option_index = 5 THEN 
 					EXIT;
 				ELSEIF option_index = 2 THEN
 					VibrationTest;
+                ELSEIF option_index = 3 THEN
+                    GoVibPos;
 				ENDIF
 		ENDWHILE
     ENDPROC
@@ -96,4 +98,9 @@ MODULE IRB1100_Vibration_Test
 		TuneReset;
 		MoveAbsJ [[0,0,0,0,0,0],[9E9,9E9,9E9,9E9,9E9,9E9]]\NoEOffs,v100,fine,tool1;
 	ENDPROC
+    
+    PROC GoVibPos()
+		MoveJ P_Photo, V, fine, tool1;
+        WaitTime 10;
+    ENDPROC
 ENDMODULE
